@@ -4,7 +4,11 @@ import { Observable, Subject } from 'rxjs';
 import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
 
-(window as any).Pusher = Pusher;
+if (typeof window !== 'undefined') {
+  (window as any).Pusher = Pusher;
+} else if (typeof globalThis !== 'undefined') {
+  (globalThis as any).Pusher = Pusher;
+}
 
 @Injectable({
   providedIn: 'root'
