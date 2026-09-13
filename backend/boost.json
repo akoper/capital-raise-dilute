@@ -1,0 +1,21 @@
+{
+    "agents": [
+        "junie",
+        "claude_code",
+        "copilot"
+    ],
+    "cloud": true,
+    "guidelines": true,
+    "mcp": true,
+    "nightwatch": false,
+    "sail": false,
+    "skills": [
+        "infer-conventions",
+        "deploying-to-cloud",
+        "laravel-best-practices",
+        "testing-best-practices",
+        "passport-development",
+        "echo-development",
+        "tailwindcss-development"
+    ]
+}
