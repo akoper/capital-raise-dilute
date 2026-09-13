@@ -221,6 +221,19 @@ capital-raise-dilute/
    ```bash
    cd backend
    ```
+   Junie says:
+
+
+   Option 1: Start Redis via WSL (Recommended & Already Installed)
+In your PowerShell terminal, run:
+   ```bash
+wsl -d Ubuntu sudo service redis-server start
+
+or (You can check if it is running by executing: wsl -d Ubuntu redis-cli ping which should return PONG)
+Alternatively, to run it directly in the foreground in a dedicated terminal window:
+
+wsl -d Ubuntu redis-server
+   ```
 
 2. Install PHP dependencies:
    ```bash
@@ -340,3 +353,179 @@ php artisan test
 cd frontend
 npm test
 ```
+
+---
+
+## Google Cloud Deployment
+
+The repository includes deployment scripts and container definitions for deploying to Google Cloud (Cloud Run, Cloud Memorystore, Cloud Scheduler, and Firebase Hosting / Cloud CDN):
+
+### Quick Deploy (Automated Script)
+
+- **PowerShell (Windows)**:
+  ```powershell
+  .\deploy\deploy-gcp.ps1 -ProjectId YOUR_PROJECT_ID -Region us-central1
+  ```
+- **Bash (Linux/macOS/Cloud Shell)**:
+  ```bash
+  chmod +x ./deploy/deploy-gcp.sh
+  ./deploy/deploy-gcp.sh
+  ```
+
+### Build with Google Cloud Build
+
+Submit the build using the provided `cloudbuild.yaml`:
+```bash
+gcloud builds submit --config cloudbuild.yaml
+```
+
+### Hosting Frontend on Firebase
+```bash
+cd frontend
+npm run build
+firebase deploy --only hosting
+```
+
+---
+
+## Google Cloud Architecture & Deployment Diagram
+
+When deployed to Google Cloud Platform (GCP), the application operates as a fully managed, serverless, and auto-scaling real-time event pipeline:
+
+```mermaid
+flowchart TB
+    subgraph Clients["Users / Browsers"]
+        Browser["User Browser / Client (SPA)"]
+    end
+
+    subgraph External["External SEC Services"]
+        SEC["SEC.gov EDGAR RSS Feed\n(Latest 8-K, 424B, S-3 Filings)"]
+    end
+
+    subgraph GCP["Google Cloud Platform (GCP)"]
+        subgraph Ingestion["Ingestion & Scheduling Layer"]
+            Scheduler["Cloud Scheduler / Cron\n(Every 1 Minute)"]
+            ScheduleJob["Cloud Run Job\n(edgar-schedule-job)\n`php artisan schedule:run`"]
+        end
+
+        subgraph Ingress["Frontend & API Layer"]
+            FrontendRun["Cloud Run (edgar-frontend)\n(or Firebase Hosting / CDN)\nAngular 20 SPA"]
+            APIRun["Cloud Run (edgar-api)\nLaravel REST API\n`GET /api/edgar-feed`"]
+            ReverbRun["Cloud Run (edgar-reverb)\nLaravel Reverb WebSocket Server\n`ws://...:8080` (Session Affinity)"]
+        end
+
+        subgraph VPC["VPC Network (default)"]
+            VPCConnector["Serverless VPC Access Connector\n(edgar-vpc-connector)\n`10.8.0.0/28`"]
+            Redis["Cloud Memorystore for Redis\n(edgar-redis:6379)\n- Sorted Set deduplication (`edgar:feed`)\n- Broadcasting backplane / cache"]
+        end
+
+        subgraph CI_CD["CI/CD & Container Registry"]
+            CloudBuild["Cloud Build"]
+            ArtifactRegistry["Artifact Registry\n(edgar-tracker-repo)"]
+        end
+    end
+
+    %% Build flow
+    CloudBuild -->|Push Docker Images| ArtifactRegistry
+    ArtifactRegistry -->|Deploy Backend Image| APIRun
+    ArtifactRegistry -->|Deploy Backend Image| ReverbRun
+    ArtifactRegistry -->|Deploy Backend Image| ScheduleJob
+    ArtifactRegistry -->|Deploy Frontend Image| FrontendRun
+
+    %% Ingestion flow
+    Scheduler -->|Triggers execution| ScheduleJob
+    ScheduleJob -->|1. Polls latest RSS xml| SEC
+    ScheduleJob -->|2. Writes & deduplicates via VPC| VPCConnector
+    VPCConnector -->|Writes filings| Redis
+    ScheduleJob -->|3. Broadcasts event| ReverbRun
+
+    %% User Interaction flow
+    Browser -->|HTTPS: Load Web App| FrontendRun
+    Browser -->|HTTPS REST: Initial Feed / History| APIRun
+    APIRun -->|Reads cached feed via VPC| VPCConnector
+    VPCConnector -->|Reads `edgar:feed`| Redis
+    Browser <-->|WSS: Live Real-time WebSocket Stream| ReverbRun
+    ReverbRun -->|Pub/Sub sync via VPC| VPCConnector
+```
+
+### Architecture Topology Diagram (ASCII / Text)
+
+```text
++----------------------------------------------------------------------------------------------------+
+|                                    GOOGLE CLOUD PLATFORM (GCP)                                     |
+|                                                                                                    |
+|  +----------------------------------------------------------------------------------------------+  |
+|  | [CI/CD] Cloud Build  ==>  Artifact Registry (Docker Container Images: Backend & Frontend)     |  |
+|  +----------------------------------------------------------------------------------------------+  |
+|                                                                                                    |
+|  +-------------------------+      +-------------------------+      +----------------------------+  |
+|  | Cloud Run: Frontend     |      | Cloud Run: REST API     |      | Cloud Run: Reverb WS       |  |
+|  | (edgar-frontend)        |      | (edgar-api)             |      | (edgar-reverb)             |  |
+|  | Port 8080 / HTTPS       |      | Port 8080 / HTTPS       |      | Port 8080 / WSS (Affinity) |  |
+|  | (Angular 20 SPA)        |      | (Laravel REST API)      |      | (Laravel Reverb Server)    |  |
+|  +------------^------------+      +------------^------------+      +-------------^--------------+  |
+|               |                                |                                 |                 |
+|               | (1. Load Webpage)              | (2. Initial Load / Cache)       | (3. Live Stream)|
+|               |                                |                                 |                 |
+|  +------------+--------------------------------+---------------------------------+--------------+  |
+|  |                                  USER BROWSER / CLIENT                                       |  |
+|  +----------------------------------------------------------------------------------------------+  |
+|                                                                                                    |
+|  +----------------------------------------------------------------------------------------------+  |
+|  | SCHEDULED INGESTION PIPELINE:                                                                |  |
+|  | Cloud Scheduler  ==[1 min trigger]==>  Cloud Run Job (edgar-schedule-job)                    |  |
+|  |                                              |                                               |  |
+|  |                                  (Pulls RSS) v                                               |  |
+|  |                               +-------------------------+                                    |  |
+|  |                               | SEC EDGAR System        |                                    |  |
+|  |                               | (www.sec.gov RSS feed)  |                                    |  |
+|  |                               +-------------------------+                                    |  |
+|  +----------------------------------------------+-----------------------------------------------+  |
+|                                                 | (Stores parsed filings & publishes events)       |
+|                                                 v                                                  |
+|  +----------------------------------------------------------------------------------------------+  |
+|  | VPC NETWORK:                                                                                 |  |
+|  |                                                                                              |  |
+|  |                     +---------------------------------------------+                          |  |
+|  |                     | Serverless VPC Access Connector             |                          |  |
+|  |                     | (edgar-vpc-connector: 10.8.0.0/28)          |                          |  |
+|  |                     +----------------------+----------------------+                          |  |
+|  |                                            |                                                 |  |
+|  |                                            v                                                 |  |
+|  |                     +---------------------------------------------+                          |  |
+|  |                     | Cloud Memorystore for Redis (edgar-redis)   |                          |  |
+|  |                     | Port 6379 (Private IP)                      |                          |  |
+|  |                     | - Feed storage & ZADD deduplication         |                          |  |
+|  |                     | - Laravel Cache & Reverb Pub/Sub Backplane  |                          |  |
+|  |                     +---------------------------------------------+                          |  |
+|  +----------------------------------------------------------------------------------------------+  |
++----------------------------------------------------------------------------------------------------+
+```
+
+### Deployed Components & GCP Services
+
+| Component | GCP Service | Role & Functionality in Cloud |
+|---|---|---|
+| **Frontend UI** | **Cloud Run (`edgar-frontend`)** / **Firebase Hosting** | Serves the Angular 20 SPA built with Signals, real-time audio alerts, and responsive dark theme across global CDNs. |
+| **REST API** | **Cloud Run (`edgar-api`)** | Stateless container running PHP 8.2 / Laravel 12. Serves endpoints like `GET /api/edgar-feed` with high concurrency and automatic horizontal auto-scaling. |
+| **WebSocket Server** | **Cloud Run (`edgar-reverb`)** | Runs Laravel Reverb with session affinity enabled, 3600s connection timeouts, and minimum 1 instance to keep WebSocket channels open for immediate live push notifications. |
+| **Scheduled Ingestion** | **Cloud Scheduler** + **Cloud Run Job (`edgar-schedule-job`)** | Runs `php artisan schedule:run` every minute. Fetches the SEC EDGAR XML/RSS feed, parses Form 8-K/424B/S-3 filings, classifies capital raise / dilution signals, and triggers broadcasts. |
+| **In-Memory Store** | **Cloud Memorystore (Redis)** | High-throughput, low-latency private in-memory database (`edgar:feed` sorted set) providing zero-duplicate ingestion and Redis Pub/Sub coordination. |
+| **VPC Connectivity** | **Serverless VPC Access Connector** | Bridges serverless Cloud Run containers to the private VPC network where Redis Memorystore resides without exposing Redis to the public Internet. |
+| **Container Registry** | **Artifact Registry** & **Cloud Build** | Automated container image building, vulnerability scanning, and storage for both backend and frontend container artifacts. |
+
+### Data Flow in Production
+
+1. **Ingestion & Filtering**:
+   - Cloud Scheduler triggers `edgar-schedule-job` on Cloud Run every 60 seconds.
+   - The job requests the SEC EDGAR RSS feed using compliant `User-Agent` headers.
+   - Filings are parsed and classified for capital raise keywords (ATM offerings, direct placements, convertible notes, Form S-3 / 424B).
+   - Filings are deduplicated and saved to Cloud Memorystore Redis (`edgar:feed` sorted set).
+
+2. **Real-time Broadcasting**:
+   - Newly discovered filings fire the `EdgarFeedUpdated` broadcast event.
+   - The event is delivered through Laravel Reverb (`edgar-reverb`), pushing the JSON payload over open WebSockets (`edgar-stream` channel) to all connected clients.
+
+3. **Client Consumption**:
+   - The Angular client receives live WebSocket payloads and reactively updates state signals, trigger counters, badge pills, and audio chimes without page reload.
+   - If a client disconnects or newly loads, it performs a fast HTTP GET request to `edgar-api`, which fetches the latest 50 filings directly from Cloud Memorystore Redis.

@@ -24,6 +24,43 @@ class CorsTest extends TestCase
         $response->assertHeader('Access-Control-Allow-Origin', 'http://localhost:4200');
     }
 
+    public function test_cors_headers_on_ws_config_from_cloud_run_frontend(): void
+    {
+        $response = $this->withHeaders([
+            'Origin' => 'https://edgar-frontend-random123-uc.a.run.app',
+        ])->getJson('/api/ws-config');
+
+        $response->assertStatus(200);
+        $response->assertHeader('Access-Control-Allow-Origin', 'https://edgar-frontend-random123-uc.a.run.app');
+    }
+
+    public function test_ws_config_returns_http_on_localhost(): void
+    {
+        $response = $this->withHeaders([
+            'Host' => 'localhost',
+        ])->getJson('/api/ws-config');
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'scheme' => 'http',
+            'useTLS' => false,
+            'port' => 8080,
+        ]);
+    }
+
+    public function test_ws_config_returns_https_for_cloud_run_host(): void
+    {
+        $response = $this->getJson('https://edgar-api-dynamichash99-uc.a.run.app/api/ws-config');
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'host' => 'edgar-reverb-dynamichash99-uc.a.run.app',
+            'scheme' => 'https',
+            'useTLS' => true,
+            'port' => 443,
+        ]);
+    }
+
     public function test_edgar_parsing(): void
     {
         $mockXml = <<<XML

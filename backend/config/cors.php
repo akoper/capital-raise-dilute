@@ -15,23 +15,30 @@ return [
     |
     */
 
-    'paths' => ['api/*', 'sanctum/csrf-cookie'],
+    'paths' => ['api/*', 'sanctum/csrf-cookie', '*'],
 
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
         'http://localhost:4200',
         'http://127.0.0.1:4200',
-        env('FRONTEND_URL', 'http://localhost:4200'),
+        'http://localhost:8001',
+        'http://127.0.0.1:8001',
+        '*',
     ],
 
     'allowed_origins_patterns' => [
-        '#^http://(localhost|127\.0\.0\.1)(:\d+)?$#',
+        '#^https?://(localhost|127\.0\.0\.1)(:\d+)?$#',
+        '#^https?://.*\.run\.app$#',
+        '#^https?://.*\.a\.run\.app$#',
+        '#^https?://.*\.web\.app$#',
+        '#^https?://.*\.firebaseapp\.com$#',
+        '#^https?://.*#',
     ],
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    'exposed_headers' => ['*'],
 
     'max_age' => 0,
 
